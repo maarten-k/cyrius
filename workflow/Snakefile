@@ -1,0 +1,68 @@
+import os
+
+
+configfile: "config/config.yaml"
+
+
+from snakemake.remote import gridftp
+
+# Make directories to output files
+
+# This should be the same reference used to map reads
+ref_fasta = config["reference"]
+
+
+gridftp = gridftp.RemoteProvider()
+
+
+all_sample_map = {}
+for l in [line.split()[0:2] for line in open(config["sample2file"]).readlines()]:
+    all_sample_map[l[0]] = l[1].replace(
+        "/projectmine-nfs/",
+        "gridftp.grid.sara.nl:2811/pnfs/grid.sara.nl/data/lsgrid/Project_MinE/",
+    )
+
+
+rule all:
+    input:
+        for_pon=expand(
+            "results/{sample}/{sample}.B5_MHC-DE.1.fastq.gz",
+            sample=all_sample_map.keys(),
+        ),
+
+
+rule cyrius:
+    input:
+        cram=ancient(
+            lambda wildcards: (
+                gridftp.remote(f"{all_sample_map[wildcards.sample]}", streams=1)
+            )
+        ),
+        crai=ancient(
+            lambda wildcards: (
+                gridftp.remote(f"{all_sample_map[wildcards.sample]}.crai", streams=1)
+            )
+        ),
+        ref=ref_fasta,
+    output:
+        "results/{sample}.json",
+        "results/{sample}.tsv",
+    conda:
+        "envs/cyrius.yaml"
+    threads: 1
+    resources:
+        mem_mb=5000,
+        runtime=10,
+    shell:
+        """
+    echo {input.cram} > /tmp/{wildcards.sample}MANIFEST_FILE
+
+    cyrius \
+    --manifest /tmp/{wildcards.sample}MANIFEST_FILE \
+        --genome 38 \
+        --prefix {wildcards.sample} \
+        --outDir results \
+        --threads {threads} \
+    --reference {input.ref}
+
+    """
